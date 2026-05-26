@@ -1,4 +1,3 @@
-# siRNA_drug_development
 # siRNA脱靶评估生信分析流程
 
 配套代码：公众号文章《siRNA脱靶效应：药企生信是如何系统性评估的》
