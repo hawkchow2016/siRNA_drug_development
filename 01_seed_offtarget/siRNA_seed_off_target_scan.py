@@ -1,4 +1,8 @@
 """
+配套文章（含完整解读）：siRNA脱靶效应：药企生信是如何系统性评估的（公众号链接）
+"""
+
+"""
 siRNA seed区全转录组3'UTR脱靶扫描
 
 主要功能：
@@ -209,7 +213,15 @@ HIGH_RISK_GENES_SETS = {
     "neurotoxicity": {"APP", "PSEN1", "PSEN2", "MAPT", "SNCA", "HTT", "TARDBP", "SOD1"},  # 神经毒性相关基因（阿尔茨海默病、帕金森病相关）
 }
 
-def annotate_risk(df, risk_genes_sets=HIGH_RISK_GENES_SETS):
+# ΔG数值和预设高风险基因集这两个维度都存在盲区：
+# ΔG维度的盲区是：-8.5和-9.9之间的差距被人为压缩成同一个"低风险"标签，丢失了梯度信息。
+# 预设基因集的盲区是：高风险基因集是静态的，不考虑靶点特异性。比如做PCSK9 siRNA，肝脏代谢基因就是需要重点关注的，
+# 但做神经系统靶点的siRNA，心脏离子通道基因反而优先级更高。
+# 所以，需要引入第三个维度：“靶组织中的表达量”
+
+def annotate_risk(df, risk_genes_sets=HIGH_RISK_GENES_SETS, 
+                  tissue = "Liver", gtex_path="GTEx_Analysis_2017-06-05_v8_RNASeQCv1.1.9_gene_median_tpm.gct", 
+                  expression_threshold=1.0):
     """
     对高置信命中位点进行功能注释，标记是否命中高风险基因
     标记规则：
@@ -232,17 +244,49 @@ def annotate_risk(df, risk_genes_sets=HIGH_RISK_GENES_SETS):
         for gene in genes:
             gene_to_risk[gene] = category
 
+    # 如果有表达量数据，建立基因→TPM的映射
+    expression_data = load_gtex_expression(gtex_path, tissue=tissue)
+    expr_map = {}
+    if expression_data is not None:
+        tissue_col = f"TPM_{tissue}"
+        if tissue_col in expression_data.columns:
+            expr_map = dict(zip(
+                expression_data["gene_name"],
+                expression_data[tissue_col]
+            ))
+
     def classify_row(row):
         gene = row.get('gene_name', 'Unknown')
         bind_energy = row.get('binding_energy', 0.0)
-        if gene in gene_to_risk:
-            return "高风险", gene_to_risk[gene] 
-        elif bind_energy < -10.0:
-            return "中风险（强结合）", "-"
+        tpm = expr_map.get(gene, None)
+
+        is_risk_gene = gene in gene_to_risk
+        is_strong_binding = bind_energy < -10.0
+
+        # 无表达量数据：保守处理，标记为"存疑·需人工审核"
+        if tpm is None:
+            if is_risk_gene:
+                return "高风险（无表达数据·保守标记）", gene_to_risk.get(gene, "—"), None
+            elif is_strong_binding:
+                return "中风险（无表达数据·保守标记）", "—", None
+            else:
+                return "存疑·建议补充表达量数据", "—", None  # ← 不再静默忽略
+        
+        # 有表达量数据：三维度综合判断
+        high_expr = tpm > expression_threshold
+
+        if is_risk_gene and high_expr:
+            return "高风险", gene_to_risk[gene], tpm
+        elif is_strong_binding and high_expr:
+            return "高风险（强结合+高表达）", "—", tpm
+        elif is_risk_gene and not high_expr:
+            return "中风险（风险基因但低表达）", gene_to_risk[gene], tpm
+        elif is_strong_binding and not high_expr:
+            return "中风险（强结合但低表达）", "—", tpm
         else:
-            return "低风险", "-"
+            return "低风险（弱结合+低表达）", "—", tpm  # ← 此时"低风险"才是真正有依据的
     
-    df[['risk_category', 'risk_gene_sets']] = df.apply(
+    df[['risk_category', 'risk_gene_sets', 'target_tissue_TPM']] = df.apply(
         lambda row: pd.Series(classify_row(row)), axis=1
     )
 
@@ -298,6 +342,47 @@ Seed区反向互补序列: {seed_rc}
 3. 乘客链脱靶风险
 """
     return report
+
+def load_gtex_expression(
+    gtex_path: str,
+    tissue: str = "Liver"
+) -> pd.DataFrame:
+    """
+    读取GTEx组织表达量数据
+
+    参数：
+        gtex_path: GTEx median TPM文件路径（.gct格式）
+        tissue   : 靶组织名称，需与GTEx列名匹配
+                   常用值：
+                   "Liver"（肝脏，GalNAc/LNP递送的主要靶组织）
+                   "Lung"
+                   "Brain - Cortex"
+                   "Heart - Left Ventricle"
+
+    返回：
+        包含 gene_name 和 TPM_{tissue} 列的DataFrame
+    """
+    # GCT格式：前两行是header，跳过
+    df = pd.read_csv(gtex_path, sep="\t", skiprows=2)
+
+    # 列名格式：Name, Description, tissue1, tissue2...
+    if "Description" not in df.columns:
+        raise ValueError("GTEx文件格式不符，请检查是否正确跳过header行")
+
+    # 找到靶组织列（GTEx列名用空格，需模糊匹配）
+    tissue_cols = [c for c in df.columns if tissue.lower() in c.lower()]
+    if not tissue_cols:
+        available = [c for c in df.columns if c not in ["Name", "Description"]]
+        raise ValueError(
+            f"未找到组织'{tissue}'，可用组织包括：\n"
+            + "\n".join(available[:10]) + "\n..."
+        )
+
+    tissue_col = tissue_cols[0]
+
+    result = df[["Description", tissue_col]].copy()
+    result.columns = ["gene_name", f"TPM_{tissue}"]
+    return result
 
 # ======================================
 # 主流程函数
