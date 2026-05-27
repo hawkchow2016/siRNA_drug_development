@@ -213,12 +213,6 @@ HIGH_RISK_GENES_SETS = {
     "neurotoxicity": {"APP", "PSEN1", "PSEN2", "MAPT", "SNCA", "HTT", "TARDBP", "SOD1"},  # 神经毒性相关基因（阿尔茨海默病、帕金森病相关）
 }
 
-# ΔG数值和预设高风险基因集这两个维度都存在盲区：
-# ΔG维度的盲区是：-8.5和-9.9之间的差距被人为压缩成同一个"低风险"标签，丢失了梯度信息。
-# 预设基因集的盲区是：高风险基因集是静态的，不考虑靶点特异性。比如做PCSK9 siRNA，肝脏代谢基因就是需要重点关注的，
-# 但做神经系统靶点的siRNA，心脏离子通道基因反而优先级更高。
-# 所以，需要引入第三个维度：“靶组织中的表达量”
-
 def annotate_risk(df, risk_genes_sets=HIGH_RISK_GENES_SETS, 
                   tissue = "Liver", gtex_path="GTEx_Analysis_2017-06-05_v8_RNASeQCv1.1.9_gene_median_tpm.gct", 
                   expression_threshold=1.0):
@@ -284,7 +278,7 @@ def annotate_risk(df, risk_genes_sets=HIGH_RISK_GENES_SETS,
         elif is_strong_binding and not high_expr:
             return "中风险（强结合但低表达）", "—", tpm
         else:
-            return "低风险（弱结合+低表达）", "—", tpm  # ← 此时"低风险"才是真正有依据的
+            return "低风险（弱结合+低表达）", "—", tpm 
     
     df[['risk_category', 'risk_gene_sets', 'target_tissue_TPM']] = df.apply(
         lambda row: pd.Series(classify_row(row)), axis=1
