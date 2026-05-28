@@ -172,22 +172,59 @@ def build_modification_suggestion(
 
 def build_gu_suggestion(
     strand: str,
-    
+    gu_content: float,
+    seq_len: int
 ):
-
-def detect_immune_motifs(seq: str, strand_label: str,
-                         motif_db: dict = TLR_MOTIF_DB,
-                         gu_threshold: float = 0.5):
     """
-    检测单条RNA序列中的已知免疫激活motif，并计算GU含量
+    针对GU含量偏高的修饰建议
+    区分乘客链和引导链的不同处理策略
+    """
+    if strand == "passenger":
+        return(
+            f"乘客链GU含量偏高（{gu_content:.1%}，>50%警戒线）。\n"
+            f"      建议：\n"
+            f"      · 乘客链可大范围引入2'-OMe/2'-F交替修饰\n"
+            f"      · 乘客链对修饰耐受性高，全链修饰方案可行\n"
+            f"      · 若条件允许，优先重新设计序列降低GU含量"
+        )
+    
+    # 引导链GU含量高：不能全链修饰
+    return(
+        f"引导链GU含量偏高（{gu_content:.1%}，>50%警戒线）。\n"
+        f"      注意：引导链不能全链统一引入2'-OMe修饰。\n"
+        f"      建议策略（按优先级排序）：\n"
+        f"      1. 重新设计序列降低GU含量（根本解决方案）\n"
+        f"      2. 若序列不可替换：\n"
+        f"          · 在引导链非敏感位点（避开第2位、第10~11位）\n"
+        f"            选择性引入2'-OMe修饰\n"
+        f"          · 在正义链大范围引入2'-OMe/2'-F修饰\n"
+        f"          · 可考虑在引导链采用2'-OMe和2'-F交替修饰模式，\n"
+        f"            但须明确跳过第2位和第10~11位\n"
+        f"      3. 所有修饰方案均需实验验证沉默活性"
+    )
+
+def detect_immune_motifs(
+    seq: str, 
+    strand_label: str,
+    motif_db: dict = TLR_MOTIF_DB,
+    gu_threshold: float = 0.5):
+    """
+    检测单条RNA序列中的免疫激活风险
     
     参数：
     - seq: RNA序列
     - strand_label: "guide"或"passenger"，用于后续修饰建议
     - motif_db: motif数据库
     - gu_threshold: GU含量阈值（可选，默认0.5——文献参考：>50%为高风险）
+    
+    返回：
+        每个风险发现对应一个字典，包含：
+        - motif、位置、机制、文献来源
+        - 是否覆盖敏感位点（引导链专属）
+        - 是否与seed区重叠（引导链专属）
+        - 有位置约束的修饰建议
     """
-    seq = seq.upper().replace('T', 'U')  
+    seq = normalize_sequence(seq)
     detected_motifs = []
     
     # 检测已知高风险motif
@@ -195,18 +232,20 @@ def detect_immune_motifs(seq: str, strand_label: str,
         positions = [m.start() for m in re.finditer(motif, seq)]
         if positions:
             for pos in positions:
-                # 修饰建议： 在motif中优先选择非seed区位置引入2'-O-甲基修饰
-                # 如果是guide strand且位置在seed区（2-8），标记需谨慎
-                is_seed_region = (strand_label == 'guide' and 1 <= pos <= 7)
-
+                motif_start_1_indexed = pos + 1 #转为 1-indexed
+                sensitive_pos = get_sensitive_pos_in_motif(
+                    motif_start_1_indexed, len(motif), strand_label
+                )
+                seed_overlap = get_seed_overlap(
+                    motif_start_1_indexed, len(motif), strand_label
+                )
+                suggestion = build_modification_suggestion(
+                    strand_label, motif, motif_start_1_indexed,
+                    sensitive_pos, seed_overlap
+                )
                 detected_motifs.append({
-                    'strand': strand_label,
-                    'motif': motif,
-                    'source': source,
-                    'mechanism': mechanism,
-                    'position': pos + 1,  # 转为1-based位置
-                    'is_seed_region': is_seed_region,
-                    'modification_suggestion': '可在此位置引入2\'-O-甲基修饰以降低TLR激活风险' if not is_seed_region else "谨慎: 位于seed区，2'-OMe修饰可能影响RISC活性，建议优先在passenger strand或guide非seed区修饰"
+                    "risk_type":        "已知TLR motif",
+                    "": ,
                 })
     
     # GU含量通用风险评估
