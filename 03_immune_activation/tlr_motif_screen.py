@@ -245,20 +245,30 @@ def detect_immune_motifs(
                 )
                 detected_motifs.append({
                     "risk_type":        "已知TLR motif",
-                    "": ,
+                    "strand": strand_label,
+                    "motif": motif,
+                    "position_1indexed": motif_start_1_indexed,
+                    "mechanism": mechanism,
+                    "literature_source": source,
+                    "sensitive_pos_overlap": sensitive_pos,
+                    "seed_region_overlap": seed_overlap,
+                    "modification_suggestion": suggestion
                 })
     
     # GU含量通用风险评估
     gu_content = calc_gu_content(seq)
     if gu_content > gu_threshold:
         detected_motifs.append({
+            'risk_type': "GU含量偏高"，
             'strand': strand_label,
             'motif': f"GU-rich (GU含量={gu_content:.1%})",
             'source': '文献综合分析',
             'mechanism': 'TLR7/8 general GU-recongnition',
             'position': '全序列',
             'is_seed_region': False,
-            'modification_suggestion': f'GU含量{gu_content:.2f}超过阈值{gu_threshold}，建议重新优化序列以降低GU含量，或全链引入修饰2\'-OMe/ 2\'-F以降低免疫激活风险'
+            'modification_suggestion': build_gu_suggestion（
+                strand_label, gu_content, len(seq)
+            ）
         })
     
-    return detected_motifs, gu_content
+    return detected_motifs
